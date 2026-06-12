@@ -137,33 +137,26 @@ document.addEventListener('keydown', (e) => {
 
 /* ═══════════════════════════════════════════
    SCROLL SUAVE
+   ─────────────────────────────────────────────
+   Usa scrollIntoView() nativo em vez de um loop
+   rAF + window.scrollTo() manual.
+
+   Motivo: no iOS Safari e Chrome Android, chamar
+   window.scrollTo() dentro de um rAF loop COMPITE
+   com o scroll nativo do browser — o browser aplica
+   a inércia do dedo enquanto o JS força outra posição,
+   causando os "micro resets" e travamentos reportados.
+
+   scrollIntoView({ behavior:'smooth', block:'start' })
+   delega o movimento inteiramente ao browser, que usa
+   a mesma pipeline do scroll nativo — sem conflito,
+   sem reflow forçado, sem interferência na thread principal.
+
+   O offset do nav fixo é compensado via CSS scroll-margin-top
+   em cada section (declarado no style.css).
 ═══════════════════════════════════════════ */
 function smoothScrollTo(target) {
-  const navHeight = document.querySelector('nav').offsetHeight || 72;
-  const targetY   = target.getBoundingClientRect().top + window.scrollY - navHeight - 8;
-  const startY    = window.scrollY;
-  const distance  = targetY - startY;
-
-  /* Duration feels unhurried but never sluggish.
-     Multiplier 0.35 gives ~490ms for a full-page jump. */
-  const duration = Math.min(780, Math.max(400, Math.abs(distance) * 0.35));
-  let startTime  = null;
-
-  /* ease-in-out-quad: gentle acceleration from rest, peak in the
-     middle, gradual deceleration to stop. Mimics natural physical
-     movement — the eye reads it as intentional, not automated. */
-  function ease(t) {
-    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-  }
-
-  function step(ts) {
-    if (!startTime) startTime = ts;
-    const elapsed  = ts - startTime;
-    const progress = Math.min(elapsed / duration, 1);
-    window.scrollTo(0, startY + distance * ease(progress));
-    if (progress < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /* ═══════════════════════════════════════════
@@ -260,6 +253,13 @@ function handleSubmit(btn) {
 
 /* ═══════════════════════════════════════════
    BEFORE & AFTER CAROUSEL
+   ─────────────────────────────────────────────
+   Navegação entre slides: APENAS botões e dots.
+   Swipe horizontal REMOVIDO completamente.
+
+   Motivo: swipe no track conflitava com o scroll
+   vertical da página — qualquer deslize diagonal
+   podia trocar o slide acidentalmente.
 ═══════════════════════════════════════════ */
 (function () {
   const total     = 9;
@@ -272,9 +272,9 @@ function handleSubmit(btn) {
   const currentEl = document.getElementById('bacCurrent');
   const dots      = document.querySelectorAll('.bac-dot');
 
-  if (!track) return; // guard in case section isn't present
+  if (!track) return;
 
-  const slides    = track.querySelectorAll('.bac-slide');
+  const slides = track.querySelectorAll('.bac-slide');
 
   function goTo(index) {
     if (isAnimating || index === current) return;
@@ -283,29 +283,21 @@ function handleSubmit(btn) {
     const prevSlide = slides[current];
     const nextSlide = slides[index];
 
-    /* Fade out current */
     prevSlide.classList.add('exit');
     prevSlide.classList.remove('active');
 
     setTimeout(() => {
       prevSlide.classList.remove('exit');
-
-      /* Show next */
       nextSlide.classList.add('active');
       current = index;
-
-      /* Update counter */
       currentEl.textContent = current + 1;
 
-      /* Update dots */
       dots.forEach((d, i) => {
         d.classList.toggle('active', i === current);
         d.setAttribute('aria-selected', i === current ? 'true' : 'false');
       });
 
       isAnimating = false;
-
-      /* Re-init slider on the newly visible slide */
       initSlider(nextSlide.querySelector('[data-slider]'));
     }, 230);
   }
@@ -320,30 +312,31 @@ function handleSubmit(btn) {
     });
   });
 
-  /* #C4 — Arrow keys: guard against firing when mobile menu is open */
+  /* Keyboard navigation — only when menu is closed */
   document.addEventListener('keydown', e => {
     if (fsMenu.classList.contains('is-open')) return;
     if (e.key === 'ArrowLeft')  goTo((current - 1 + total) % total);
     if (e.key === 'ArrowRight') goTo((current + 1) % total);
   });
 
-  /* Touch swipe on the track */
-  let touchStartX = 0;
-  track.addEventListener('touchstart', e => {
-    touchStartX = e.touches[0].clientX;
-  }, { passive: true });
-  track.addEventListener('touchend', e => {
-    const diff = touchStartX - e.changedTouches[0].clientX;
-    if (Math.abs(diff) > 50) {
-      diff > 0
-        ? goTo((current + 1) % total)
-        : goTo((current - 1 + total) % total);
-    }
-  }, { passive: true });
+  /* ── Image comparison slider ──────────────────────────────────────
+     Problema anterior: touchstart ativava dragging=true imediatamente,
+     fazendo qualquer toque sobre o slider (inclusive rolagem vertical)
+     mover o comparador.
 
-  /* ── Image comparison slider logic ── */
-  /* #M9 — Use WeakMap instead of storing _initialized on DOM element */
-  const initializedSliders = new WeakMap();
+     Solução: threshold direcional de 8px antes de confirmar o arraste.
+     Enquanto o usuário não passar 8px, o gesto é apenas "pendente".
+     Se o movimento for predominantemente VERTICAL → cancela e entrega
+     o controle ao scroll nativo do browser (touch-action: pan-y no CSS).
+     Se for predominantemente HORIZONTAL → ativa o arraste do slider.
+
+     Estados possíveis de intentState:
+       'pending'    → toque iniciado, ainda sem direção confirmada
+       'dragging'   → arraste horizontal confirmado — slider ativo
+       'scrolling'  → arraste vertical confirmado — slider ignorado
+  ──────────────────────────────────────────────────────────────── */
+  const DIRECTION_THRESHOLD = 8; /* px mínimos antes de confirmar direção */
+  const initializedSliders  = new WeakMap();
 
   function initSlider(slider) {
     if (!slider || initializedSliders.has(slider)) return;
@@ -351,7 +344,14 @@ function handleSubmit(btn) {
 
     const before  = slider.querySelector('.ba-img-before');
     const divider = slider.querySelector('.ba-divider');
-    let dragging  = false;
+
+    /* Estado do toque atual */
+    let intentState = 'idle'; /* idle | pending | dragging | scrolling */
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    /* Estado do mouse (desktop) */
+    let mouseDragging = false;
 
     function setPosition(x) {
       const rect = slider.getBoundingClientRect();
@@ -361,47 +361,75 @@ function handleSubmit(btn) {
       divider.style.left    = `${pct}%`;
     }
 
-    /* Mouse */
+    /* ── Mouse (desktop) — sem mudanças ── */
     slider.addEventListener('mousedown', e => {
-      dragging = true;
+      mouseDragging = true;
       slider.classList.add('is-dragging');
       setPosition(e.clientX);
     });
-
-    /* #C3 — Named handler references so listeners can be cleaned up properly.
-       Each slider gets its own closure-scoped handlers, so window only ever
-       has ONE mousemove and ONE mouseup listener total (added once on the
-       first initSlider call, reused for all subsequent sliders via dragging flag). */
     const onMouseMove = e => {
-      if (!dragging) return;
+      if (!mouseDragging) return;
       setPosition(e.clientX);
     };
     const onMouseUp = () => {
-      if (!dragging) return;
-      dragging = false;
+      if (!mouseDragging) return;
+      mouseDragging = false;
       slider.classList.remove('is-dragging');
     };
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup',   onMouseUp);
 
-    /* Touch */
+    /* ── Touch — com threshold direcional ── */
     slider.addEventListener('touchstart', e => {
-      dragging = true;
-      slider.classList.add('is-dragging');
-      setPosition(e.touches[0].clientX);
+      intentState = 'pending';
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      /* NÃO chama setPosition aqui — aguarda confirmação de direção */
     }, { passive: true });
+
     slider.addEventListener('touchmove', e => {
-      if (!dragging) return;
-      e.stopPropagation();
-      setPosition(e.touches[0].clientX);
-    }, { passive: false });
+      if (intentState === 'scrolling') return; /* entregue ao scroll nativo */
+
+      const dx = Math.abs(e.touches[0].clientX - touchStartX);
+      const dy = Math.abs(e.touches[0].clientY - touchStartY);
+
+      if (intentState === 'pending') {
+        /* Ainda sem direção confirmada — aguarda o threshold */
+        if (dx < DIRECTION_THRESHOLD && dy < DIRECTION_THRESHOLD) return;
+
+        if (dx >= dy) {
+          /* Movimento predominantemente horizontal → slider ativo */
+          intentState = 'dragging';
+          slider.classList.add('is-dragging');
+        } else {
+          /* Movimento predominantemente vertical → scroll nativo */
+          intentState = 'scrolling';
+          return; /* não cancela o evento — browser rola a página */
+        }
+      }
+
+      if (intentState === 'dragging') {
+        /* Só chama preventDefault quando temos certeza que é arraste horizontal.
+           Isso evita que o browser role a página enquanto o slider está ativo. */
+        e.preventDefault();
+        setPosition(e.touches[0].clientX);
+      }
+    }, { passive: false }); /* passive:false necessário para poder chamar preventDefault */
+
     slider.addEventListener('touchend', () => {
-      dragging = false;
+      if (intentState === 'dragging') {
+        slider.classList.remove('is-dragging');
+      }
+      intentState = 'idle';
+    });
+
+    slider.addEventListener('touchcancel', () => {
       slider.classList.remove('is-dragging');
+      intentState = 'idle';
     });
   }
 
-  /* Init first slide's slider immediately */
+  /* Init do primeiro slide imediatamente */
   initSlider(slides[0].querySelector('[data-slider]'));
 })();
 /* ═══════════════════════════════════════════
@@ -659,7 +687,7 @@ function handleSubmit(btn) {
     modal.removeAttribute('inert');
     document.body.style.overflow = 'hidden';
 
-    /* Init slider once (handlers persist via dragging flag) */
+    /* Init slider once */
     if (!sliderInitialized) {
       initModalSlider();
       sliderInitialized = true;
@@ -676,7 +704,7 @@ function handleSubmit(btn) {
     document.body.style.overflow = '';
   }
 
-  /* ── Slider init ── */
+  /* ── Modal slider — com threshold direcional ── */
   function setSliderPos(x) {
     const rect = slider.getBoundingClientRect();
     let pct = ((x - rect.left) / rect.width) * 100;
@@ -686,6 +714,12 @@ function handleSubmit(btn) {
   }
 
   function initModalSlider() {
+    const DIRECTION_THRESHOLD = 8;
+    let modalIntentState = 'idle';
+    let modalTouchStartX = 0;
+    let modalTouchStartY = 0;
+
+    /* Mouse */
     slider.addEventListener('mousedown', e => {
       sliderDragging = true;
       slider.classList.add('is-dragging');
@@ -700,19 +734,47 @@ function handleSubmit(btn) {
       sliderDragging = false;
       slider.classList.remove('is-dragging');
     });
+
+    /* Touch — com threshold direcional */
     slider.addEventListener('touchstart', e => {
-      sliderDragging = true;
-      slider.classList.add('is-dragging');
-      setSliderPos(e.touches[0].clientX);
+      modalIntentState = 'pending';
+      modalTouchStartX = e.touches[0].clientX;
+      modalTouchStartY = e.touches[0].clientY;
     }, { passive: true });
+
     slider.addEventListener('touchmove', e => {
-      if (!sliderDragging) return;
-      e.stopPropagation();
-      setSliderPos(e.touches[0].clientX);
+      if (modalIntentState === 'scrolling') return;
+
+      const dx = Math.abs(e.touches[0].clientX - modalTouchStartX);
+      const dy = Math.abs(e.touches[0].clientY - modalTouchStartY);
+
+      if (modalIntentState === 'pending') {
+        if (dx < DIRECTION_THRESHOLD && dy < DIRECTION_THRESHOLD) return;
+        if (dx >= dy) {
+          modalIntentState = 'dragging';
+          slider.classList.add('is-dragging');
+        } else {
+          modalIntentState = 'scrolling';
+          return;
+        }
+      }
+
+      if (modalIntentState === 'dragging') {
+        e.preventDefault();
+        setSliderPos(e.touches[0].clientX);
+      }
     }, { passive: false });
+
     slider.addEventListener('touchend', () => {
-      sliderDragging = false;
+      if (modalIntentState === 'dragging') {
+        slider.classList.remove('is-dragging');
+      }
+      modalIntentState = 'idle';
+    });
+
+    slider.addEventListener('touchcancel', () => {
       slider.classList.remove('is-dragging');
+      modalIntentState = 'idle';
     });
   }
 
