@@ -201,9 +201,10 @@ const revealObs = new IntersectionObserver((entries) => {
     }
   });
 }, {
-  /* Trigger reveal when element is still 32px below the viewport edge.
-     Combined with the 0.8s ease-in-out-quad, the element is already
-     mid-animation by the time the eye reaches it — feels effortless. */
+  /* Dispara quando o elemento está a 32px de entrar na viewport.
+     O fade de opacity começa antes de o usuário ver o elemento,
+     então ele já está visível quando os olhos chegam nele.
+     Sem translateY — apenas opacity, zero impacto no layout. */
   rootMargin: '0px 0px -32px 0px',
   threshold: 0
 });
