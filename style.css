@@ -55,6 +55,18 @@ body {
   min-width: 0;
   line-height: 1.6;
   position: relative;
+  /* Evita o efeito "bounce" do iOS que compete com o scroll JS
+     e causa micro-resets de posição durante a navegação vertical. */
+  overscroll-behavior-y: none;
+}
+
+/* scroll-margin-top em todas as sections âncora —
+   compensa o nav fixo ao usar scrollIntoView({ behavior:'smooth' }).
+   Valor = altura do nav (≈72px no padrão, ≈60px com is-scrolled) + 8px de folga. */
+#hero, #trust, #services, #why,
+#transformations, #testimonials,
+#process, #offer, #contact, #final-cta {
+  scroll-margin-top: 80px;
 }
 
 /* ─── TYPOGRAPHY ─── */
@@ -91,9 +103,12 @@ h1, h2, h3 {
   box-shadow: 0 12px 40px rgba(212,175,55,0.55);
 }
 .sticky-call svg { width: 18px; height: 18px; }
+/* Pulso via opacity em vez de box-shadow.
+   box-shadow anima na main thread (repaint a cada frame) —
+   opacity anima no compositor (sem repaint, sem interferência no scroll). */
 @keyframes pulse-gold {
-  0%, 100% { box-shadow: 0 8px 32px rgba(212,175,55,0.45); }
-  50% { box-shadow: 0 8px 48px rgba(212,175,55,0.7); }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.82; }
 }
 
 /* ═══════════════════════════════════════════
@@ -113,11 +128,12 @@ nav {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid rgba(212,175,55,0.2);
-  transition: padding 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94), border-color 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  /* Anima apenas border-color — compositor-safe, sem reflow */
+  transition: border-color 0.4s ease;
   box-sizing: border-box;
-  will-change: padding;
+  /* will-change: padding causava reflow a cada scroll — removido */
 }
-/* Applied via JS class toggle — compositor-friendly, no reflow */
+/* Applied via JS class toggle */
 nav.is-scrolled {
   padding: 10px 5%;
   border-bottom-color: rgba(212,175,55,0.35);
